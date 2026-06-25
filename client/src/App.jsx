@@ -1,44 +1,22 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './layouts/MainLayout';
 
 // ── Pages ──────────────────────────────────────────────────────────────────────
-import LandingPage  from './pages/LandingPage';
-import LoginPage    from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
+import LandingPage    from './pages/LandingPage';
+import LoginPage      from './pages/LoginPage';
+import RegisterPage   from './pages/RegisterPage';
+import DashboardPage  from './pages/DashboardPage';
+import MyTripsPage    from './pages/MyTripsPage';
+import TripDetailPage from './pages/TripDetailPage';
 
-// ── Phase 2 placeholder pages (stubs so routes don't 404) ─────────────────────
-// These will be replaced in Phase 2 with full implementations.
-const DashboardPage  = () => (
-  <div className="min-h-screen flex items-center justify-center">
-    <p className="text-gray-400 text-lg font-medium">
-      Dashboard — Coming in Phase 2
-    </p>
-  </div>
-);
-const MyTripsPage    = () => (
-  <div className="min-h-screen flex items-center justify-center">
-    <p className="text-gray-400 text-lg font-medium">
-      My Trips — Coming in Phase 2
-    </p>
-  </div>
-);
-const TripResultPage = () => (
-  <div className="min-h-screen flex items-center justify-center">
-    <p className="text-gray-400 text-lg font-medium">
-      Trip Result — Coming in Phase 2
-    </p>
-  </div>
-);
-const TripDetailPage = () => (
-  <div className="min-h-screen flex items-center justify-center">
-    <p className="text-gray-400 text-lg font-medium">
-      Trip Detail — Coming in Phase 2
-    </p>
-  </div>
-);
+// Redirect /trip/:id → /trips/:id preserving the dynamic segment
+const TripRedirect = () => {
+  const { id } = useParams();
+  return <Navigate to={`/trips/${id}`} replace />;
+};
 
 const App = () => (
   <BrowserRouter>
@@ -68,7 +46,7 @@ const App = () => (
       />
 
       <Routes>
-        {/* ── Public routes wrapped in MainLayout (Navbar + Footer) ────────── */}
+        {/* ── All routes wrapped in MainLayout (Navbar + Footer) ────────── */}
         <Route element={<MainLayout />}>
           <Route path="/"         element={<LandingPage />} />
           <Route path="/login"    element={<LoginPage />} />
@@ -91,14 +69,7 @@ const App = () => (
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/trip/:id"
-            element={
-              <ProtectedRoute>
-                <TripResultPage />
-              </ProtectedRoute>
-            }
-          />
+          {/* Primary trip detail route */}
           <Route
             path="/trips/:id"
             element={
@@ -106,6 +77,11 @@ const App = () => (
                 <TripDetailPage />
               </ProtectedRoute>
             }
+          />
+          {/* Legacy /trip/:id alias → redirect to canonical /trips/:id */}
+          <Route
+            path="/trip/:id"
+            element={<TripRedirect />}
           />
         </Route>
 

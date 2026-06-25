@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Plane, ExternalLink, Heart, Mail, Info } from 'lucide-react';
+import { Plane, Heart, Mail, Info, GitBranch } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const Footer = () => {
@@ -69,7 +69,7 @@ const Footer = () => {
                   rel="noreferrer"
                   className="flex items-center gap-2 hover:text-white transition-colors"
                 >
-                  <Github size={14} /> GitHub
+                  <GitBranch size={14} /> GitHub
                 </a>
               </li>
             </ul>
