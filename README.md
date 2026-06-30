@@ -91,7 +91,7 @@ TripAI/
 ## ⚙️ Installation
 ```bash
 # Clone Repository
-git clone https://github.com/chaitna27/TripAI.git
+git clone https://github.com/chaitna27/Trip_planner.git
 
 # Backend
 cd server
