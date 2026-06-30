@@ -1,7 +1,7 @@
 import { generateTrip } from "../services/geminiService.js";
 import { getWeather } from "../services/weatherService.js";
 import { searchHotels } from "../services/hotelService.js";
-import { getDestinationImages } from "../services/imageService.js";
+import { getDestinationImages, getActivityImage } from "../services/imageService.js";
 import { buildTripPrompt } from "../utils/promptBuilder.js";
 import Trip from "../models/Trip.js";
 import { searchFlights } from "../services/flightService.js";
@@ -16,6 +16,7 @@ export const createTrip = async (req, res) => {
 
     const destination = trip.destination || req.body.destination;
 
+    // ── Phase 1: Fetch destination-level data in parallel ──────────────
     const [weather, hotels, images, flights] = await Promise.all([
       getWeather(destination),
       searchHotels(destination),
@@ -28,6 +29,52 @@ export const createTrip = async (req, res) => {
       }),
     ]);
 
+    // ── Phase 2: Fetch one image per activity ───────────────────────────
+    // Collect a flat list of activity references with their search queries
+    const days = Array.isArray(trip.itinerary) ? trip.itinerary : [];
+
+    const activityRefs = [];
+    days.forEach((day, dayIdx) => {
+      const acts = Array.isArray(day.activities) ? day.activities : [];
+      acts.forEach((act, actIdx) => {
+        // Only process activities that are proper objects (not plain strings)
+        if (act && typeof act === "object") {
+          const query = act.imageQuery || act.placeName || null;
+          activityRefs.push({ dayIdx, actIdx, query });
+        }
+      });
+    });
+
+    console.log(
+      `[TripController] Fetching images for ${activityRefs.length} activities...`
+    );
+    activityRefs.forEach(({ query }, i) =>
+      console.log(`  [${i + 1}] query: "${query}"`)
+    );
+
+    if (activityRefs.length > 0) {
+      // Promise.allSettled — never throws; each activity gets its own result
+      const results = await Promise.allSettled(
+        activityRefs.map(({ query }) =>
+          query ? getActivityImage(query) : Promise.resolve(null)
+        )
+      );
+
+      // Attach imageUrl directly onto each activity object
+      activityRefs.forEach(({ dayIdx, actIdx }, i) => {
+        const settled = results[i];
+        const imageUrl =
+          settled.status === "fulfilled" ? settled.value ?? null : null;
+
+        days[dayIdx].activities[actIdx].imageUrl = imageUrl;
+
+        console.log(
+          `  [${i + 1}] "${activityRefs[i].query}" → ${imageUrl ? imageUrl.slice(0, 60) + "…" : "null"}`
+        );
+      });
+    }
+
+    // ── Save trip (itinerary now contains activity-level imageUrls) ─────
     const savedTrip = await Trip.create({
       user: req.user._id,
       source: req.body.source,

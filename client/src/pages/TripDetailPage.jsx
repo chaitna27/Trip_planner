@@ -37,6 +37,18 @@ const fmtDate = (d) =>
       })
     : null;
 
+// Currency formatter — strips any leading ₹ before prepending one,
+// so values that already contain ₹ (from the backend) never double up.
+const fmtCurrency = (val) => {
+  if (val === null || val === undefined) return null;
+  const str = String(val).trim();
+  if (!str) return null;
+  if (str.startsWith('₹')) return str;
+  const num = Number(str.replace(/,/g, ''));
+  if (!isNaN(num) && str !== '') return `₹${num.toLocaleString('en-IN')}`;
+  return str;
+};
+
 const getTimeOfDay = (str) => {
   if (!str || typeof str !== 'string') return 'night';
   const s = str.toLowerCase();
@@ -57,26 +69,35 @@ const getTimeOfDay = (str) => {
   return 'night';
 };
 
+const VALID_BANDS = new Set(['morning', 'afternoon', 'evening', 'night']);
+
 const groupByTime = (activities) => {
   const out = { morning: [], afternoon: [], evening: [], night: [] };
   if (!Array.isArray(activities)) return out;
   activities.forEach((act) => {
-    let timeStr = '';
+    let band;
     if (typeof act === 'string') {
-      timeStr = act;
+      band = getTimeOfDay(act);
     } else if (act && typeof act === 'object') {
-      timeStr = act.time ?? act.timing ?? act.recommendedTime ?? act.timeOfDay ?? '';
+      // New schema: act.timeOfDay is already the exact band name
+      const directBand = typeof act.timeOfDay === 'string' ? act.timeOfDay.toLowerCase().trim() : null;
+      if (directBand && VALID_BANDS.has(directBand)) {
+        band = directBand;
+      } else {
+        // Fallback: infer from any available time string
+        const timeStr = act.time ?? act.timing ?? act.recommendedTime ?? act.timeOfDay ?? '';
+        band = getTimeOfDay(timeStr);
+      }
+    } else {
+      band = 'night';
     }
-    const band = getTimeOfDay(timeStr);
     out[band].push(typeof act === 'string' ? { activity: act } : act);
   });
   return out;
 };
 
-const pickImage = (images, idx) => {
-  if (!images?.length) return null;
-  return images[idx % images.length]?.imageUrl ?? null;
-};
+// Images are now served per-activity from the backend (act.imageUrl).
+// pickImage cycling removed to prevent incorrect image assignments.
 
 /* ─── Time-of-Day Band Config ────────────────────────────────────────────── */
 const BANDS = [
@@ -135,7 +156,13 @@ const NAV_ITEMS = [
 ];
 
 const scrollToSection = (id) => {
-  const el = document.getElementById(id);
+  // Some section IDs (weather, hotels, flights) exist in both the hidden
+  // mobile block AND the visible desktop sidebar. Pick the first one that
+  // is actually rendered (offsetParent !== null means it is not display:none).
+  const candidates = document.querySelectorAll(`[id="${id}"]`);
+  const el =
+    Array.from(candidates).find((e) => e.offsetParent !== null) ??
+    document.getElementById(id);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
@@ -144,11 +171,16 @@ const scrollToSection = (id) => {
    ───────────────────────────────────────────────────────────────────────── */
 
 /* ── ActivityCard ─────────────────────────────────────────────────────────── */
-const ActivityCard = ({ act, imgSrc, band }) => {
-  const name = act.activity ?? act.name ?? act.title ?? null;
+const ActivityCard = ({ act, fallbackImg, band }) => {
+  // Use the activity-specific imageUrl embedded by the backend;
+  // fall back to the destination hero image — never cycle unrelated images.
+  const imgSrc = act.imageUrl ?? fallbackImg ?? null;
+  // New schema uses placeName; keep legacy fallbacks for old trips
+  const name = act.placeName ?? act.activity ?? act.name ?? act.title ?? null;
   const desc = act.description ?? null;
   const category = act.category ?? null;
-  const time = act.time ?? act.timing ?? act.recommendedTime ?? null;
+  // New schema uses recommendedTime for the time chip
+  const time = act.recommendedTime ?? act.time ?? act.timing ?? null;
   const duration = act.duration ?? act.estimatedDuration ?? null;
   const cost = act.estimatedCost ?? act.cost ?? null;
   const travelMode = act.travelMode ?? act.transport ?? act.mode ?? null;
@@ -160,6 +192,8 @@ const ActivityCard = ({ act, imgSrc, band }) => {
   return (
     <motion.div
       variants={fadeUp}
+      initial="hidden"
+      animate="visible"
       className="flex bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md hover:border-gray-200 transition-all duration-200 group"
     >
       {/* Thumbnail */}
@@ -224,7 +258,7 @@ const ActivityCard = ({ act, imgSrc, band }) => {
           )}
           {cost && (
             <span className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold">
-              ₹{typeof cost === 'number' ? cost.toLocaleString() : cost}
+              {fmtCurrency(cost)}
             </span>
           )}
         </div>
@@ -234,8 +268,7 @@ const ActivityCard = ({ act, imgSrc, band }) => {
 };
 
 /* ── DayCard ──────────────────────────────────────────────────────────────── */
-const DayCard = ({ day, dayIndex, images, imgOffset }) => {
-  const [open, setOpen] = useState(true);
+const DayCard = ({ day, dayIndex, heroImg, isOpen, onToggle }) => {
 
   const dayNum = day.day ?? day.dayNumber ?? dayIndex + 1;
   const title = day.title ?? day.theme ?? day.focus ?? null;
@@ -245,14 +278,6 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
   const food = day.foodSuggestions ?? day.food ?? day.meals ?? [];
 
   const grouped = groupByTime(activities);
-
-  // Pre-compute image start index for each band so images don't repeat within a day
-  const bandStartIdx = {};
-  let runOff = imgOffset;
-  BANDS.forEach((b) => {
-    bandStartIdx[b.key] = runOff;
-    runOff += grouped[b.key]?.length ?? 0;
-  });
 
   const hasActivities = Array.isArray(activities) && activities.length > 0;
 
@@ -264,7 +289,7 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
       {/* Day Header */}
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggle}
         className="w-full flex items-center gap-3 p-4 sm:p-5 bg-gradient-to-r from-primary-700 via-primary-600 to-secondary-500 text-left focus:outline-none"
       >
         {/* Day number badge */}
@@ -286,7 +311,7 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
               {date && <span className="text-white/65 text-xs">{date}</span>}
               {cost && (
                 <span className="text-xs text-white/95 font-semibold bg-white/15 px-2.5 py-0.5 rounded-full border border-white/20">
-                  ~₹{typeof cost === 'number' ? cost.toLocaleString() : cost}
+                  ~{fmtCurrency(cost)}
                 </span>
               )}
             </div>
@@ -294,7 +319,7 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
         </div>
 
         <div className="shrink-0">
-          {open ? (
+          {isOpen ? (
             <ChevronUp size={18} className="text-white/70" />
           ) : (
             <ChevronDown size={18} className="text-white/70" />
@@ -304,7 +329,7 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
 
       {/* Day Body */}
       <AnimatePresence initial={false}>
-        {open && (
+        {isOpen && (
           <motion.div
             key="body"
             initial={{ height: 0, opacity: 0 }}
@@ -349,7 +374,7 @@ const DayCard = ({ day, dayIndex, images, imgOffset }) => {
                             />
                             <ActivityCard
                               act={act}
-                              imgSrc={pickImage(images, bandStartIdx[band.key] + i)}
+                              fallbackImg={heroImg}
                               band={band}
                             />
                           </div>
@@ -528,8 +553,7 @@ const HotelsWidget = ({ hotels }) => {
                   )}
                   {price && (
                     <span className="text-xs text-emerald-700 font-bold">
-                      ₹{typeof price === 'number' ? price.toLocaleString() : price}
-                      /night
+                      {fmtCurrency(price)}/night
                     </span>
                   )}
                 </div>
@@ -583,7 +607,7 @@ const FlightsWidget = ({ flights }) => {
                 </div>
                 {price && (
                   <span className="shrink-0 text-sm font-black text-primary-700">
-                    ₹{typeof price === 'number' ? price.toLocaleString() : price}
+                    {fmtCurrency(price)}
                   </span>
                 )}
               </div>
@@ -651,9 +675,7 @@ const TripOverviewWidget = ({ trip }) => {
     {
       icon: TrendingUp,
       label: 'Est. Total',
-      value: totalCost
-        ? `₹${typeof totalCost === 'number' ? totalCost.toLocaleString() : totalCost}`
-        : null,
+      value: totalCost ? fmtCurrency(totalCost) : null,
     },
     { icon: Clock, label: 'Duration', value: duration },
     { icon: Globe, label: 'Best Time', value: bestTime },
@@ -871,6 +893,8 @@ const TripDetailPage = () => {
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [activeSection, setActiveSection] = useState('overview');
+  // Accordion: null = all collapsed. Only one day open at a time.
+  const [openDayIndex, setOpenDayIndex] = useState(null);
 
   /* ── PRESERVED: data fetch ───────────────────────────────────────────── */
   useEffect(() => {
@@ -969,15 +993,8 @@ const TripDetailPage = () => {
     ? rawDays
     : Object.values(itinerary ?? {}).find(Array.isArray) ?? [];
 
-  // Pre-compute cumulative activity image offsets per day
-  const dayImgOffsets = [];
-  let cumOffset = 0;
-  daysArr.forEach((day) => {
-    dayImgOffsets.push(cumOffset);
-    const acts =
-      day.activities ?? day.schedule ?? day.events ?? day.places ?? [];
-    cumOffset += Array.isArray(acts) ? acts.length : 0;
-  });
+  // Activity images are now embedded directly in each activity object (act.imageUrl)
+  // by the backend — no offset pre-computation needed.
 
   /* ── Render ──────────────────────────────────────────────────────────── */
   return (
@@ -1134,8 +1151,11 @@ const TripDetailPage = () => {
                     key={i}
                     day={day}
                     dayIndex={i}
-                    images={images}
-                    imgOffset={dayImgOffsets[i]}
+                    heroImg={heroImg}
+                    isOpen={openDayIndex === i}
+                    onToggle={() =>
+                      setOpenDayIndex((prev) => (prev === i ? null : i))
+                    }
                   />
                 ))}
               </motion.div>
